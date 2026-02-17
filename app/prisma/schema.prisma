@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model IntakeRequest {
+  id             String      @id @default(cuid())
+  customerName   String
+  email          String?
+  phone          String?
+  vesselName     String?
+  serviceRequest String
+  location       String
+  status         String      @default("NEW")
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  workOrders     WorkOrder[]
+  activityLogs   ActivityLog[]
+}
+
+model WorkOrder {
+  id              String      @id @default(cuid())
+  intakeRequestId String
+  status          String      @default("NEW")
+  internalNotes   String?
+  completedAt     DateTime?
+  qbInvoiceId     String?
+  qbSyncStatus    String      @default("PENDING")
+  qbRetryCount    Int         @default(0)
+  qbLastError     String?
+  wallaceEntered   Boolean     @default(false)
+  wallaceEnteredAt DateTime?
+  wallaceExternalId String?
+  wallaceSyncStatus String     @default("PENDING")
+  createdAt        DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  intakeRequest IntakeRequest @relation(fields: [intakeRequestId], references: [id], onDelete: Cascade)
+  activityLogs  ActivityLog[]
+}
+
+model ActivityLog {
+  id              String        @id @default(cuid())
+  entityType      ActivityEntity
+  action          String
+  message          String
+  metadata        Json?
+  workOrderId     String?
+  intakeRequestId String?
+  createdAt       DateTime      @default(now())
+
+  workOrder    WorkOrder?    @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  intakeRequest IntakeRequest? @relation(fields: [intakeRequestId], references: [id], onDelete: Cascade)
+
+  @@index([workOrderId, createdAt])
+  @@index([intakeRequestId, createdAt])
+}
+
+enum ActivityEntity {
+  INTAKE
+  WORK_ORDER
+  QUICKBOOKS
+}
