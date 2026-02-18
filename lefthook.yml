@@ -1,0 +1,13 @@
+pre-commit:
+  parallel: true
+  commands:
+    lint:
+      run: cd app && npm run lint
+
+pre-push:
+  parallel: false
+  commands:
+    typecheck:
+      run: cd app && npm run typecheck
+    unit:
+      run: cd app && npm run test

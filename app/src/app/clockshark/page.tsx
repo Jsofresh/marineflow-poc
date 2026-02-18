@@ -21,7 +21,38 @@ type WallaceJob = {
   status: string
 }
 
-type WindowKey = '1D' | '1W' | '2W' | '1M'
+type WindowKey = '1D' | '1W' | '2W' | '1M' | 'CUSTOM'
+
+
+
+
+function toInputDateUTC(d: Date) {
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function formatDateUTC(d: Date) {
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  })
+}
+
+function getWindowRangeLabel(windowKey: WindowKey) {
+  const end = new Date()
+  const start = new Date(end)
+
+  if (windowKey === '1D') start.setUTCDate(end.getUTCDate())
+  if (windowKey === '1W') start.setUTCDate(end.getUTCDate() - 6)
+  if (windowKey === '2W') start.setUTCDate(end.getUTCDate() - 13)
+  if (windowKey === '1M') start.setUTCDate(end.getUTCDate() - 29)
+
+  return `${formatDateUTC(start)} – ${formatDateUTC(end)}`
+}
 
 type DashboardData = {
   technicians: Technician[]
@@ -37,6 +68,9 @@ export default function ClocksharkPage() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [selectedTech, setSelectedTech] = useState<string>('ALL')
   const [timeWindow, setTimeWindow] = useState<WindowKey>('1D')
+  const today = new Date()
+  const [customStart, setCustomStart] = useState<string>(toInputDateUTC(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - 6))))
+  const [customEnd, setCustomEnd] = useState<string>(toInputDateUTC(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()))))
 
   useEffect(() => {
     fetch('/api/mock/clockshark/dashboard', { cache: 'no-store' })
@@ -71,11 +105,33 @@ export default function ClocksharkPage() {
   }, [data, visibleTechs, visibleWallaceJobs])
 
 
+  const customDays = (() => {
+    const start = new Date(`${customStart}T00:00:00Z`)
+    const end = new Date(`${customEnd}T00:00:00Z`)
+    const ms = end.getTime() - start.getTime()
+    const days = Math.floor(ms / (1000 * 60 * 60 * 24)) + 1
+    return Number.isFinite(days) && days > 0 ? days : 1
+  })()
+
   const windowMultiplier: Record<WindowKey, number> = {
     '1D': 1,
     '1W': 5,
     '2W': 10,
     '1M': 22,
+    'CUSTOM': customDays,
+  }
+
+  const windowRangeLabel =
+    timeWindow === 'CUSTOM'
+      ? `${formatDateUTC(new Date(`${customStart}T00:00:00Z`))} – ${formatDateUTC(new Date(`${customEnd}T00:00:00Z`))}`
+      : getWindowRangeLabel(timeWindow)
+
+  const windowOptionLabels: Record<WindowKey, string> = {
+    '1D': `1 day (${getWindowRangeLabel('1D')})`,
+    '1W': `1 week (${getWindowRangeLabel('1W')})`,
+    '2W': `2 weeks (${getWindowRangeLabel('2W')})`,
+    '1M': `1 month (${getWindowRangeLabel('1M')})`,
+    'CUSTOM': `Custom range (${windowRangeLabel})`,
   }
 
   const scaledSummary = focusedSummary
@@ -93,7 +149,7 @@ export default function ClocksharkPage() {
           <div>
             <h1 className="text-2xl font-bold">ClockShark + Wallace Time View</h1>
             <p className="text-sm text-slate-600">
-              Technician day totals (ClockShark) vs per-job logged time (Wallace).
+              Technician day totals (ClockShark) vs per-job logged time (Wallace). Window: {windowRangeLabel}.
             </p>
           </div>
           <div className="flex items-center gap-3 text-sm">
@@ -129,21 +185,39 @@ export default function ClocksharkPage() {
                     value={timeWindow}
                     onChange={(e) => setTimeWindow(e.target.value as WindowKey)}
                   >
-                    <option value="1D">1 day</option>
-                    <option value="1W">1 week</option>
-                    <option value="2W">2 weeks</option>
-                    <option value="1M">1 month</option>
+                    <option value="1D">{windowOptionLabels['1D']}</option>
+                    <option value="1W">{windowOptionLabels['1W']}</option>
+                    <option value="2W">{windowOptionLabels['2W']}</option>
+                    <option value="1M">{windowOptionLabels['1M']}</option>
+                    <option value="CUSTOM">{windowOptionLabels['CUSTOM']}</option>
                   </select>
+
+                  {timeWindow === 'CUSTOM' && (
+                    <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+                      <input
+                        type="date"
+                        className="w-full rounded border p-2 text-sm"
+                        value={customStart}
+                        onChange={(e) => setCustomStart(e.target.value)}
+                      />
+                      <input
+                        type="date"
+                        className="w-full rounded border p-2 text-sm"
+                        value={customEnd}
+                        onChange={(e) => setCustomEnd(e.target.value)}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
               <p className="mt-2 text-xs text-slate-500">
-                Select technician and window to reduce clutter and compare ClockShark totals vs Wallace job logs for the same period.
+                Select technician and window to reduce clutter and compare ClockShark totals vs Wallace job logs for the same period. Use Custom range calendar inputs for any date span. Active range: {windowRangeLabel}.
               </p>
             </section>
 
             <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <Kpi label="ClockShark total (day)" value={`${scaledSummary.totalClockedHours}h`} />
+              <Kpi label={`ClockShark total (${windowRangeLabel})`} value={`${scaledSummary.totalClockedHours}h`} />
               <Kpi label="Wallace job hours" value={`${scaledSummary.totalWallaceJobHours}h`} />
               <Kpi label="Unallocated / overhead" value={`${scaledSummary.deltaHours}h`} />
             </section>

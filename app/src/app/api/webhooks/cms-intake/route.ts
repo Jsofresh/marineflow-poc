@@ -3,6 +3,13 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { mapCmsWebhookToIntake } from '@/lib/cms-intake-map'
 import { buildWallacePacket } from '@/lib/wallace-packet'
+import {
+  buildIdempotencyKey,
+  hashPayload,
+  markWebhookEventStatus,
+  recordWebhookEvent,
+} from '@/lib/webhook-events'
+import { inngest } from '@/lib/inngest/client'
 
 function getHeader(req: Request, name: string) {
   return req.headers.get(name) ?? req.headers.get(name.toLowerCase())
@@ -21,13 +28,49 @@ function isAuthorized(req: Request) {
 }
 
 export async function POST(req: Request) {
+  let webhookEventId: string | null = null
+
   try {
     if (!isAuthorized(req)) {
       return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
     }
 
-    const payload = await req.json()
+    const rawBody = await req.text()
+    const payload = JSON.parse(rawBody)
     const mapped = mapCmsWebhookToIntake(payload)
+
+    const source = 'cms_webhook'
+    const eventType = mapped.formType || 'unknown_form'
+    const payloadHash = hashPayload(rawBody)
+    const providedIdempotencyKey =
+      getHeader(req, 'x-idempotency-key') ?? getHeader(req, 'x-event-id') ?? getHeader(req, 'x-webhook-id')
+
+    const idempotencyKey = buildIdempotencyKey({
+      source,
+      eventType,
+      providedKey: providedIdempotencyKey,
+      payloadHash,
+    })
+
+    const eventRecord = await recordWebhookEvent({
+      source,
+      eventType,
+      idempotencyKey,
+      payload,
+    })
+
+    if (eventRecord.duplicate) {
+      return NextResponse.json(
+        {
+          ok: true,
+          duplicate: true,
+          idempotencyKey,
+        },
+        { status: 200 }
+      )
+    }
+
+    webhookEventId = eventRecord.event.id
 
     const createdIntake = await prisma.intakeRequest.create({
       data: {
@@ -73,6 +116,7 @@ export async function POST(req: Request) {
           source: 'cms_webhook',
           formType: mapped.formType,
           handoffPacket,
+          idempotencyKey,
         },
       })
     }
@@ -86,9 +130,24 @@ export async function POST(req: Request) {
         source: 'cms_webhook',
         formType: mapped.formType,
         sourceUrl: mapped.sourceUrl,
+        idempotencyKey,
         rawPayload: JSON.stringify(mapped.raw),
       },
     })
+
+    await inngest.send({
+      name: 'cms/intake.received',
+      data: {
+        intakeId: createdIntake.id,
+        workOrderId: createdWorkOrderId,
+        formType: mapped.formType,
+        idempotencyKey,
+      },
+    })
+
+    if (webhookEventId) {
+      await markWebhookEventStatus(webhookEventId, 'PROCESSED')
+    }
 
     return NextResponse.json(
       {
@@ -96,10 +155,15 @@ export async function POST(req: Request) {
         intakeId: createdIntake.id,
         workOrderId: createdWorkOrderId,
         formType: mapped.formType,
+        idempotencyKey,
       },
       { status: 201 }
     )
-  } catch {
+  } catch (error: unknown) {
+    if (webhookEventId) {
+      const message = error instanceof Error ? error.message : String(error)
+      await markWebhookEventStatus(webhookEventId, 'FAILED', message)
+    }
     return NextResponse.json({ ok: false, error: 'Invalid webhook payload' }, { status: 400 })
   }
 }

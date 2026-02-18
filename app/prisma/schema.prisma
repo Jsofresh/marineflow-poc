@@ -60,6 +60,20 @@ model ActivityLog {
   @@index([intakeRequestId, createdAt])
 }
 
+model WebhookEvent {
+  id             String   @id @default(cuid())
+  source         String
+  eventType      String
+  idempotencyKey String   @unique
+  payload        Json
+  status         String   @default("RECEIVED")
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([source, eventType, createdAt])
+}
+
 enum ActivityEntity {
   INTAKE
   WORK_ORDER

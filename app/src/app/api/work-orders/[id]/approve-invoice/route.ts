@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { buildWallacePacket } from '@/lib/wallace-packet'
+import { dispatchToWallaceMock } from '@/lib/wallace-adapter'
 
 export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -37,16 +38,16 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       },
     })
 
-    // Auto-run first automation step immediately after approve
-    const updated = await prisma.workOrder.update({
-      where: { id },
-      data: {
-        status: 'PARTS_ORDERED',
-        wallaceSyncStatus: 'CONFIRMED',
-        wallaceEntered: true,
-        wallaceEnteredAt: new Date(),
-      },
+    // Auto-run first automation step immediately after approve via Wallace mock adapter
+    const wallaceResult = await dispatchToWallaceMock({
+      workOrderId: queued.id,
+      packet,
     })
+
+    const updated = await prisma.workOrder.findUnique({ where: { id: queued.id } })
+    if (!updated) {
+      return NextResponse.json({ ok: false, error: 'Work order not found after Wallace dispatch' }, { status: 404 })
+    }
 
     await logAudit({
       entityType: 'WORK_ORDER',
@@ -60,6 +61,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
           nextAction: 'Await parts arrived event',
         },
         wallacePacket: packet,
+        wallaceDispatch: wallaceResult,
       },
     })
 

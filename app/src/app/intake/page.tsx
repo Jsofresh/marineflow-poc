@@ -282,9 +282,9 @@ export default function IntakePage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-8">
-      <div className="mx-auto max-w-4xl space-y-5">
-        <div className="flex items-center justify-between gap-3">
+    <main className="min-h-screen p-8">
+      <div className="mx-auto max-w-6xl space-y-5">
+        <div className="card-soft flex items-center justify-between gap-3 p-5">
           <div>
             <h1 className="text-2xl font-bold">Incoming CMS form results (mock)</h1>
             <p className="text-sm text-slate-600">
@@ -302,10 +302,10 @@ export default function IntakePage() {
           </div>
         </div>
 
-        <section className="rounded border bg-white p-4">
+        <section className="card-soft p-4">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Service forms</p>
           <select
-            className="w-full rounded border p-2 text-sm md:max-w-sm"
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm md:max-w-sm"
             value={activeFormType}
             onChange={(e) => setActiveFormType(e.target.value as FormType)}
           >
@@ -318,9 +318,9 @@ export default function IntakePage() {
 
         {result && (
           <div
-            className={`rounded border p-4 text-sm ${
+            className={`card-soft p-4 text-sm ${
               result.kind === 'success'
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                ? 'border-emerald-200 bg-emerald-50/90 text-emerald-900'
                 : 'border-red-200 bg-red-50 text-red-900'
             }`}
           >
@@ -334,12 +334,12 @@ export default function IntakePage() {
 
         <div className="space-y-4">
           {visibleSamples.length === 0 ? (
-            <section className="rounded border bg-white p-4 text-sm text-slate-600">
+            <section className="card-soft p-4 text-sm text-slate-600">
               No mock examples loaded yet for this form type.
             </section>
           ) : (
             visibleSamples.map((sample) => (
-              <section key={sample.id} className="rounded border bg-white p-4">
+              <section key={sample.id} className="card-soft p-5">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{sample.id}</p>
@@ -349,13 +349,13 @@ export default function IntakePage() {
                   <button
                     disabled={loadingId === sample.id}
                     onClick={() => importSample(sample)}
-                    className="rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50"
+                    className="rounded-xl bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50 hover:bg-slate-700"
                   >
                     {loadingId === sample.id ? 'Importing…' : 'Import to intake queue'}
                   </button>
                 </div>
 
-                <div className="grid gap-2 text-sm md:grid-cols-2">
+                <div className="grid gap-2 text-sm md:grid-cols-2 text-slate-700">
                   <p><span className="font-medium">Email:</span> {sample.email}</p>
                   <p><span className="font-medium">Phone:</span> {sample.phone}</p>
                   <p><span className="font-medium">Mailing address:</span> {sample.mailingAddress}</p>
@@ -366,7 +366,7 @@ export default function IntakePage() {
                   <p><span className="font-medium">Engine:</span> {sample.engineBrand} ({sample.engineHp})</p>
                 </div>
 
-                <div className="mt-3 rounded border bg-slate-50 p-3 text-sm">
+                <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-sm">
                   <p><span className="font-medium">Known repairs:</span> {sample.knownRepairs}</p>
                   {sample.additionalWork && <p><span className="font-medium">Additional work:</span> {sample.additionalWork}</p>}
                   <p><span className="font-medium">Helpful details:</span> {sample.helpfulDetails}</p>
