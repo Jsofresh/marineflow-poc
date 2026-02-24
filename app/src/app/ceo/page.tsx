@@ -42,9 +42,6 @@ export default function CEOPage() {
             <Link href="/" className="underline">
               Home
             </Link>
-            <Link href="/dashboard" className="underline">
-              Role dashboard
-            </Link>
             <a className="underline" href="/api/health" target="_blank" rel="noreferrer">
               Health
             </a>

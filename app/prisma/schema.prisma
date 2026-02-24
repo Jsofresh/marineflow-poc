@@ -74,6 +74,66 @@ model WebhookEvent {
   @@index([source, eventType, createdAt])
 }
 
+model WebhookInbox {
+  id             String   @id @default(cuid())
+  source         String
+  eventType      String
+  idempotencyKey String   @unique
+  payloadHash    String
+  payload        Json
+  status         String   @default("RECEIVED")
+  correlationId  String?
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([source, eventType, createdAt])
+  @@index([correlationId])
+}
+
+model EventOutbox {
+  id            String   @id @default(cuid())
+  eventType     String
+  aggregateType String
+  aggregateId   String
+  dedupeKey     String   @unique
+  correlationId String
+  causationId   String?
+  payload       Json
+  status        String   @default("PENDING")
+  attempts      Int      @default(0)
+  nextAttemptAt DateTime @default(now())
+  processedAt   DateTime?
+  lastError     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([eventType, createdAt])
+  @@index([correlationId])
+}
+
+model IntegrationAttempt {
+  id             String   @id @default(cuid())
+  provider       String
+  operation      String
+  externalKey    String
+  status         String
+  correlationId  String?
+  requestHash    String?
+  responseHash   String?
+  responseCode   Int?
+  retryable      Boolean  @default(false)
+  error          String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([provider, externalKey])
+  @@index([provider, operation, createdAt])
+  @@index([correlationId])
+}
+
 enum ActivityEntity {
   INTAKE
   WORK_ORDER

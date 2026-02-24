@@ -201,7 +201,42 @@ Notes:
   1) retry from `/manager` or the card button
   2) if needed, use `/wallace-queue` to continue manually
 
-### D) Export data for debugging / audit
+### D) Outbox queue (reliability) — drain + replay
+
+Why this exists: the app writes integration events to a durable **EventOutbox** table so we can:
+- retry safely
+- replay a specific item
+- see a ledger of attempted deliveries
+
+**List recent outbox events (last 100)**
+
+```bash
+curl -fsS \
+  -H "x-internal-worker-secret: $INTERNAL_WORKER_SECRET" \
+  http://127.0.0.1:3000/api/internal/outbox/list
+```
+
+**Drain (process) due events**
+
+```bash
+curl -fsS -X POST \
+  -H "x-internal-worker-secret: $INTERNAL_WORKER_SECRET" \
+  http://127.0.0.1:3000/api/internal/outbox/drain
+```
+
+**Replay a specific outbox event by ID**
+
+```bash
+curl -fsS -X POST \
+  -H "x-internal-worker-secret: $INTERNAL_WORKER_SECRET" \
+  http://127.0.0.1:3000/api/internal/outbox/replay/<OUTBOX_EVENT_ID>
+```
+
+What to look for:
+- `deadLettered > 0` means repeated failures (needs investigation)
+- If an event is stuck in `PROCESSING`, it likely crashed mid-run (replay it)
+
+### E) Export data for debugging / audit
 
 - Work order export CSV: `/api/work-orders/export.csv`
 - Wallace queue export CSV: `/api/wallace/queue.csv`

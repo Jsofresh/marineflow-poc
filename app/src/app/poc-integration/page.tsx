@@ -78,6 +78,39 @@ export default function PocIntegrationPage() {
     await refresh()
   }
 
+  function modeAStatus(o: WorkOrder) {
+    // Heuristic mapping to the Wallace “green/purple” language used by staff.
+    if (o.quickBooksStatus === 'INVOICED' || o.quickBooksStatus === 'PAID') return 'PURPLE'
+    if (o.stage === 'TIME_TRACKING' || o.stage === 'INVOICE' || o.stage === 'COMPLETION') return 'GREEN'
+    return 'DRAFT'
+  }
+
+  async function runModeA(workOrderId: string) {
+    // Simulate the Mode A bridge: Intake → Wallace → QuickBooks draft invoice.
+    // We intentionally keep this deterministic and stepwise.
+    setLoading(true)
+    try {
+      await fetch('/api/mock/wallace/dispatch', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workOrderId }),
+      })
+      await fetch('/api/mock/clockshark/time-entry', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workOrderId, hours: 2 }),
+      })
+      await fetch('/api/mock/quickbooks/invoice', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workOrderId }),
+      })
+      await refresh()
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-6xl space-y-5">
@@ -106,7 +139,22 @@ export default function PocIntegrationPage() {
         </section>
 
         <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-          Transition rule: Dispatch → Log Time → Invoice → Complete. Buttons unlock only when each prior step is done.
+          <p className="font-semibold">Mode A (preferred): Wallace → QuickBooks Online (QBO) bridge</p>
+          <p className="mt-1 text-blue-900/80">
+            This mock shows the <span className="font-medium">end-state</span>: customer intake creates a work order, it flows through Wallace,
+            then a draft invoice is created in QuickBooks.
+          </p>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-blue-900/80">
+            <li>
+              <span className="font-medium">Green</span> = ready for billing (work done, costs captured)
+            </li>
+            <li>
+              <span className="font-medium">Purple</span> = draft invoice exists in QBO (ready for review/send)
+            </li>
+          </ul>
+          <p className="mt-2 text-xs text-blue-900/70">
+            Note: this is a mock workflow (no Wallace API assumed). We model the bridge by syncing the billing packet into QBO.
+          </p>
         </div>
 
         <div className="overflow-x-auto rounded border bg-white">
@@ -119,6 +167,7 @@ export default function PocIntegrationPage() {
                 <th className="p-2">Wallace</th>
                 <th className="p-2">ClockShark</th>
                 <th className="p-2">QuickBooks</th>
+                <th className="p-2">Mode A</th>
                 <th className="p-2">Actions</th>
               </tr>
             </thead>
@@ -131,6 +180,21 @@ export default function PocIntegrationPage() {
                   <td className="p-2">{o.wallaceStatus ?? '-'}</td>
                   <td className="p-2">{o.clockSharkStatus ?? '-'}</td>
                   <td className="p-2">{o.quickBooksStatus ?? '-'} {o.invoiceId ? `(${o.invoiceId})` : ''}</td>
+                  <td className="p-2">
+                    <div className="text-xs font-semibold">
+                      <span className={modeAStatus(o) === 'PURPLE' ? 'text-purple-700' : modeAStatus(o) === 'GREEN' ? 'text-emerald-700' : 'text-slate-600'}>
+                        {modeAStatus(o)}
+                      </span>
+                    </div>
+                    <button
+                      disabled={loading}
+                      className="mt-1 rounded border bg-white px-2 py-1 text-xs disabled:opacity-40"
+                      onClick={() => runModeA(o.id)}
+                      title="Simulate the Mode A bridge: dispatch → time → QBO draft invoice"
+                    >
+                      Run →
+                    </button>
+                  </td>
                   <td className="p-2">
                     <div className="flex flex-wrap gap-1">
                       <button

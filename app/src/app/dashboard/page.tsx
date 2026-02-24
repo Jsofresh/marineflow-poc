@@ -1,159 +1,184 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
-type Summary = {
-  intakeCount: number
-  workOrderCount: number
-  retryCount: number
-  invoicedCount: number
-  byStatus: Record<string, number>
-  byLocation: Record<string, number>
+type WorkOrder = {
+  id: string
+  status: string
+  qbSyncStatus: string
+  wallaceEntered: boolean
+  wallaceSyncStatus: string
+  updatedAt: string
+  intakeRequest: {
+    customerName: string
+    location: string
+    vesselName: string | null
+  }
 }
 
-const roles = ['jessica', 'manager', 'ceo'] as const
+type Data = { workOrders: WorkOrder[] }
 
-type Role = (typeof roles)[number]
+type Section = {
+  key: string
+  title: string
+  subtitle: string
+  rows: WorkOrder[]
+}
 
 export default function DashboardPage() {
-  const [role, setRole] = useState<Role>('jessica')
-  const [summary, setSummary] = useState<Summary | null>(null)
-  const [quality, setQuality] = useState<{ avgScore: number; lowQualityCount: number } | null>(null)
-  const [reviewCount, setReviewCount] = useState(0)
+  const [data, setData] = useState<Data | null>(null)
+  const [lastScanAt, setLastScanAt] = useState<string | null>(null)
+
+  async function refresh() {
+    const d = await fetch('/api/work-orders/list', { cache: 'no-store' }).then((r) => r.json())
+    setData({ workOrders: d.workOrders ?? [] })
+    // In the real product, this would come from the Wallace scanner.
+    setLastScanAt(new Date().toISOString())
+  }
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/dashboard/summary', { cache: 'no-store' }).then((r) => r.json()),
-      fetch('/api/intake/quality', { cache: 'no-store' }).then((r) => r.json()),
-      fetch('/api/intake/review-queue', { cache: 'no-store' }).then((r) => r.json()),
-    ]).then(([d, q, review]) => {
-      setSummary(d.summary)
-      setQuality(q.summary)
-      setReviewCount(review.count ?? 0)
-    })
+    // Defer to the next tick to satisfy lint rule against setState-in-effect.
+    const t = setTimeout(() => {
+      refresh()
+    }, 0)
+    return () => clearTimeout(t)
   }, [])
 
-  const priorityText = !summary
-    ? 'Loading priorities...'
-    : summary.retryCount > 0
-      ? `Priority: ${summary.retryCount} invoice sync item(s) need retry.`
-      : 'Priority: no billing blockers right now. Keep work moving to Complete.'
+  const sections: Section[] = useMemo(() => {
+    const orders = data?.workOrders ?? []
+
+    const notInWallace = orders.filter((w) => !w.wallaceEntered && w.status !== 'INVOICED')
+    const inWallace = orders.filter((w) => w.wallaceEntered && w.status !== 'COMPLETE' && w.status !== 'INVOICED')
+    const completedInWallace = orders.filter((w) => w.wallaceEntered && w.status === 'COMPLETE')
+    const readyForReview = orders.filter(
+      (w) => w.wallaceEntered && w.status === 'COMPLETE' && w.qbSyncStatus !== 'SYNCED'
+    )
+
+    return [
+      {
+        key: 'not-in-wallace',
+        title: 'Not in Wallace',
+        subtitle: 'Work orders created in MarineFlow but not yet detected in Wallace.',
+        rows: notInWallace,
+      },
+      {
+        key: 'in-wallace',
+        title: 'In Wallace (in progress)',
+        subtitle: 'Detected in Wallace; parts/labor still in motion.',
+        rows: inWallace,
+      },
+      {
+        key: 'completed',
+        title: 'Completed in Wallace',
+        subtitle: 'Complete in Wallace; should be ready for billing review.',
+        rows: completedInWallace,
+      },
+      {
+        key: 'review',
+        title: 'Ready for review → send to QuickBooks',
+        subtitle: 'Final confirmation before pushing the draft invoice to QBO.',
+        rows: readyForReview,
+      },
+    ]
+  }, [data])
 
   return (
-    <main className="min-h-screen bg-slate-50 p-8">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+    <main className="min-h-screen p-8">
+      <div className="mx-auto max-w-6xl space-y-5">
+        <div className="card-soft p-5 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold">Role dashboard</h1>
-            <p className="text-sm text-slate-600">Simple, role-based view of what to do next.</p>
+            <h1 className="text-2xl font-bold">Dashboard</h1>
+            <p className="text-sm text-slate-600">Wallace scanning + billing review pipeline (mock).</p>
           </div>
-          <div className="flex items-center gap-3">
-            <Link href="/" className="text-sm underline">
-              Home
-            </Link>
-            <div className="flex gap-2">
-              {roles.map((r) => (
-                <button
-                  key={r}
-                  onClick={() => setRole(r)}
-                  className={`px-3 py-1 rounded border text-sm ${
-                    role === r ? 'bg-slate-800 text-white' : 'bg-white'
-                  }`}
-                >
-                  {r.toUpperCase()}
-                </button>
-              ))}
-            </div>
+          <div className="flex items-center gap-3 text-sm">
+            <Link href="/board" className="underline">Board</Link>
+            <Link href="/wallace-queue" className="underline">Wallace queue</Link>
+            <Link href="/wallace-export" className="underline">Wallace → QBO</Link>
           </div>
         </div>
 
-        <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">{priorityText}</div>
+        <div className="card-soft flex flex-wrap items-center justify-between gap-3 p-3 text-sm">
+          <div>
+            <p className="font-medium">Wallace scan status</p>
+            <p className="text-slate-600">
+              Last scan: {lastScanAt ? new Date(lastScanAt).toLocaleString() : 'Not scanned yet'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              className="rounded-lg bg-slate-900 px-3 py-1 text-xs text-white"
+              onClick={async () => {
+                await fetch('/api/mock/wallace/simulate-workday', { method: 'POST' }).catch(() => null)
+                await refresh()
+              }}
+              title="Simulate a full workday: scan Wallace, move work orders, and snapshot packet totals for ready items"
+            >
+              Simulate workday →
+            </button>
+            <button className="rounded-lg border px-3 py-1 text-xs" onClick={() => refresh()}>
+              Refresh
+            </button>
+          </div>
+        </div>
 
-        {!summary && <p className="text-sm text-slate-600">Loading…</p>}
+        {!data && <div className="card-soft p-4 text-sm">Loading…</div>}
 
-        {summary && (
-          <>
-            <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Card label="Requests" value={summary.intakeCount} helper="Customer requests received" />
-              <Card label="Work orders" value={summary.workOrderCount} helper="Jobs in internal workflow" />
-              <Card label="Invoiced" value={summary.invoicedCount} helper="Billing completed" />
-              <Card label="Needs retry" value={summary.retryCount} helper="Billing action needed" alert={summary.retryCount > 0} />
-            </section>
-
-            {role === 'jessica' && (
-              <section className="rounded border bg-white p-4 space-y-3">
-                <h2 className="font-semibold">Jessica — Intake desk</h2>
-                <div className="grid sm:grid-cols-2 gap-3 text-sm">
-                  <ActionCard title="Capture new request" href="/intake" description="Use this for every incoming customer request." />
-                  <ActionCard title="Create work order" href="/board" description="Convert intake into an internal work order." />
-                  <ActionCard title="Fallback queue" href="/wallace-queue" description="Use this when external automation is unavailable." />
-                </div>
-                <p className="text-sm text-slate-700">
-                  Intake quality score: <b>{quality?.avgScore ?? '-'}%</b> · Requests to improve: <b>{quality?.lowQualityCount ?? '-'}</b>
-                </p>
-                {reviewCount > 0 ? (
-                  <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                    <p className="font-medium">Needs review: {reviewCount}</p>
-                    <p>Some requests are missing key details. Review before creating work orders.</p>
+        {data && (
+          <div className="grid gap-4">
+            {sections.map((s) => (
+              <section key={s.key} className="card-soft p-4 space-y-2">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <h2 className="text-base font-semibold">{s.title}</h2>
+                    <p className="text-xs text-slate-600">{s.subtitle}</p>
                   </div>
+                  <div className="text-xs text-slate-500">{s.rows.length} work order{s.rows.length === 1 ? '' : 's'}</div>
+                </div>
+
+                {s.rows.length === 0 ? (
+                  <div className="text-sm text-slate-500">No work orders in this section.</div>
                 ) : (
-                  <div className="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-                    Intake quality looks good. No review queue items right now.
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-100 text-left">
+                        <tr>
+                          <th className="p-2">Customer</th>
+                          <th className="p-2">Location</th>
+                          <th className="p-2">Status</th>
+                          <th className="p-2">Wallace</th>
+                          <th className="p-2">Updated</th>
+                          <th className="p-2">Next</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {s.rows.map((w) => (
+                          <tr key={w.id} className="border-t">
+                            <td className="p-2 font-medium">{w.intakeRequest.customerName}</td>
+                            <td className="p-2 text-xs text-slate-600">{w.intakeRequest.location}</td>
+                            <td className="p-2">{w.status}</td>
+                            <td className="p-2 text-xs text-slate-600">{w.wallaceEntered ? (w.wallaceSyncStatus || 'ENTERED') : 'NOT_DETECTED'}</td>
+                            <td className="p-2">{new Date(w.updatedAt).toLocaleDateString()}</td>
+                            <td className="p-2">
+                              {s.key === 'review' ? (
+                                <Link href="/wallace-export" className="rounded-lg border px-2 py-1 text-xs hover:bg-slate-50">
+                                  Review & send
+                                </Link>
+                              ) : (
+                                <span className="text-xs text-slate-500">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </section>
-            )}
-
-            {role === 'manager' && (
-              <section className="rounded border bg-white p-4 space-y-3">
-                <h2 className="font-semibold">Manager — Execution + billing</h2>
-                <ol className="list-decimal ml-5 text-sm space-y-1">
-                  <li>
-                    Clear billing blockers in the <Link className="underline" href="/manager">Retry queue</Link>.
-                  </li>
-                  <li>
-                    Resolve Wallace exceptions in the <Link className="underline" href="/wallace-exceptions">exceptions panel</Link>.
-                  </li>
-                  <li>
-                    Move jobs forward on the <Link className="underline" href="/board">Board</Link>.
-                  </li>
-                  <li>Escalate jobs stuck over 24 hours.</li>
-                </ol>
-              </section>
-            )}
-
-            {role === 'ceo' && (
-              <section className="rounded border bg-white p-4 space-y-3">
-                <h2 className="font-semibold">CEO — Pilot health</h2>
-                <p className="text-sm text-slate-700">Healthy signal: invoiced is rising and retry count is low.</p>
-                <p className="text-sm">
-                  Open the <Link className="underline" href="/ceo">CEO snapshot</Link> for read-only KPI view.
-                </p>
-              </section>
-            )}
-          </>
+            ))}
+          </div>
         )}
       </div>
     </main>
-  )
-}
-
-function Card({ label, value, helper, alert }: { label: string; value: number; helper?: string; alert?: boolean }) {
-  return (
-    <div className={`rounded border bg-white p-4 ${alert ? 'border-amber-300' : ''}`}>
-      <p className="text-sm text-slate-700 font-medium">{label}</p>
-      {helper && <p className="text-xs text-slate-500">{helper}</p>}
-      <p className="text-2xl font-bold mt-1">{value}</p>
-    </div>
-  )
-}
-
-function ActionCard({ title, description, href }: { title: string; description: string; href: string }) {
-  return (
-    <Link href={href} className="rounded border p-3 hover:bg-slate-50">
-      <p className="font-medium">{title}</p>
-      <p className="text-slate-600">{description}</p>
-    </Link>
   )
 }

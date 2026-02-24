@@ -17,6 +17,47 @@ export function buildIdempotencyKey(input: {
   return `${input.source}:${input.eventType}:${input.payloadHash}`
 }
 
+export async function recordWebhookInbox(params: {
+  source: string
+  eventType: string
+  idempotencyKey: string
+  payloadHash: string
+  payload: unknown
+  correlationId?: string
+}) {
+  try {
+    const created = await prisma.webhookInbox.create({
+      data: {
+        source: params.source,
+        eventType: params.eventType,
+        idempotencyKey: params.idempotencyKey,
+        payloadHash: params.payloadHash,
+        payload: params.payload as object,
+        correlationId: params.correlationId,
+      },
+    })
+    return { duplicate: false as const, event: created }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (message.includes('Unique constraint failed') || message.includes('idempotencyKey')) {
+      const existing = await prisma.webhookInbox.findUnique({ where: { idempotencyKey: params.idempotencyKey } })
+      return { duplicate: true as const, event: existing }
+    }
+    throw err
+  }
+}
+
+export async function markWebhookInboxStatus(id: string, status: 'PROCESSED' | 'FAILED', error?: string) {
+  return prisma.webhookInbox.update({
+    where: { id },
+    data: {
+      status,
+      error: error ?? null,
+    },
+  })
+}
+
+// legacy compatibility while transition from WebhookEvent table
 export async function recordWebhookEvent(params: {
   source: string
   eventType: string

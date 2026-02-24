@@ -71,9 +71,6 @@ export default function ManagerPage() {
             <Link className="underline" href="/board">
               Board
             </Link>
-            <Link className="underline" href="/wallace-exceptions">
-              Wallace exceptions
-            </Link>
           </div>
         </div>
 

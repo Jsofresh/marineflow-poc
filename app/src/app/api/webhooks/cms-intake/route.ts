@@ -6,10 +6,16 @@ import { buildWallacePacket } from '@/lib/wallace-packet'
 import {
   buildIdempotencyKey,
   hashPayload,
+  markWebhookInboxStatus,
   markWebhookEventStatus,
   recordWebhookEvent,
+  recordWebhookInbox,
 } from '@/lib/webhook-events'
 import { inngest } from '@/lib/inngest/client'
+import { getCorrelationId } from '@/lib/correlation'
+import { enqueueOutboxEvent } from '@/lib/outbox'
+import { recordIntegrationAttempt } from '@/lib/integration-attempts'
+import { assertServerEnv } from '@/lib/env'
 
 function getHeader(req: Request, name: string) {
   return req.headers.get(name) ?? req.headers.get(name.toLowerCase())
@@ -28,11 +34,14 @@ function isAuthorized(req: Request) {
 }
 
 export async function POST(req: Request) {
+  assertServerEnv()
+  const correlationId = getCorrelationId(req)
+  let webhookInboxId: string | null = null
   let webhookEventId: string | null = null
 
   try {
     if (!isAuthorized(req)) {
-      return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ ok: false, error: 'Unauthorized', correlationId }, { status: 401 })
     }
 
     const rawBody = await req.text()
@@ -52,25 +61,37 @@ export async function POST(req: Request) {
       payloadHash,
     })
 
+    const inboxRecord = await recordWebhookInbox({
+      source,
+      eventType,
+      idempotencyKey,
+      payloadHash,
+      payload,
+      correlationId,
+    })
+
+    if (inboxRecord.duplicate) {
+      return NextResponse.json(
+        {
+          ok: true,
+          duplicate: true,
+          idempotencyKey,
+          correlationId,
+        },
+        { status: 200 }
+      )
+    }
+
+    webhookInboxId = inboxRecord.event.id
+
+    // keep legacy record in transition window
     const eventRecord = await recordWebhookEvent({
       source,
       eventType,
       idempotencyKey,
       payload,
     })
-
-    if (eventRecord.duplicate) {
-      return NextResponse.json(
-        {
-          ok: true,
-          duplicate: true,
-          idempotencyKey,
-        },
-        { status: 200 }
-      )
-    }
-
-    webhookEventId = eventRecord.event.id
+    webhookEventId = eventRecord.duplicate ? null : eventRecord.event.id
 
     const createdIntake = await prisma.intakeRequest.create({
       data: {
@@ -117,6 +138,7 @@ export async function POST(req: Request) {
           formType: mapped.formType,
           handoffPacket,
           idempotencyKey,
+          correlationId,
         },
       })
     }
@@ -131,9 +153,28 @@ export async function POST(req: Request) {
         formType: mapped.formType,
         sourceUrl: mapped.sourceUrl,
         idempotencyKey,
+        correlationId,
         rawPayload: JSON.stringify(mapped.raw),
       },
     })
+
+    await enqueueOutboxEvent({
+      eventType: 'cms.intake.received',
+      aggregateType: 'IntakeRequest',
+      aggregateId: createdIntake.id,
+      dedupeKey: `cms.intake.received:${createdIntake.id}:${idempotencyKey}`,
+      correlationId,
+      causationId: webhookInboxId ?? undefined,
+      payload: {
+        intakeId: createdIntake.id,
+        workOrderId: createdWorkOrderId,
+        formType: mapped.formType,
+        idempotencyKey,
+      },
+    })
+
+    await markWebhookInboxStatus(webhookInboxId, 'PROCESSED')
+    if (webhookEventId) await markWebhookEventStatus(webhookEventId, 'PROCESSED')
 
     await inngest.send({
       name: 'cms/intake.received',
@@ -142,12 +183,21 @@ export async function POST(req: Request) {
         workOrderId: createdWorkOrderId,
         formType: mapped.formType,
         idempotencyKey,
+        correlationId,
       },
     })
 
-    if (webhookEventId) {
-      await markWebhookEventStatus(webhookEventId, 'PROCESSED')
-    }
+    await recordIntegrationAttempt({
+      provider: 'inngest',
+      operation: 'cms/intake.received',
+      externalKey: idempotencyKey,
+      status: 'SUCCESS',
+      correlationId,
+      metadata: {
+        intakeId: createdIntake.id,
+        workOrderId: createdWorkOrderId,
+      },
+    })
 
     return NextResponse.json(
       {
@@ -156,14 +206,30 @@ export async function POST(req: Request) {
         workOrderId: createdWorkOrderId,
         formType: mapped.formType,
         idempotencyKey,
+        correlationId,
       },
       { status: 201 }
     )
   } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+
+    if (webhookInboxId) {
+      await markWebhookInboxStatus(webhookInboxId, 'FAILED', message)
+    }
     if (webhookEventId) {
-      const message = error instanceof Error ? error.message : String(error)
       await markWebhookEventStatus(webhookEventId, 'FAILED', message)
     }
-    return NextResponse.json({ ok: false, error: 'Invalid webhook payload' }, { status: 400 })
+
+    await recordIntegrationAttempt({
+      provider: 'cms-webhook',
+      operation: 'ingest',
+      externalKey: webhookInboxId ?? `failed:${Date.now()}`,
+      status: 'TERMINAL_ERROR',
+      correlationId,
+      retryable: false,
+      error: message,
+    })
+
+    return NextResponse.json({ ok: false, error: 'Invalid webhook payload', correlationId }, { status: 400 })
   }
 }

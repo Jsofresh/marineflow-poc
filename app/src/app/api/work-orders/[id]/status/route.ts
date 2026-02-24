@@ -1,75 +1,138 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { apiError, parseJson, rateLimit, requireAdminToken } from '@/lib/api-guard'
+import { getCorrelationId } from '@/lib/correlation'
 
-const allowed = ['NEW', 'APPROVED', 'PARTS_ORDERED', 'IN_PROGRESS', 'QC', 'QUALITY_CONTROL', 'COMPLETE', 'INVOICED']
+const allowedSchema = z.object({
+  status: z.enum(['NEW', 'APPROVED', 'PARTS_ORDERED', 'IN_PROGRESS', 'QC', 'QUALITY_CONTROL', 'COMPLETE', 'INVOICED']),
+})
 
 function randomSuccess() {
   return Math.random() < 0.75
 }
 
+function isDemoAutomation(req: Request) {
+  return req.headers.get('x-demo-automation') === '1'
+}
+
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const correlationId = getCorrelationId(req)
+
+  if (!rateLimit(req, 'work-order-status-patch', 120, 60_000)) {
+    return apiError('Rate limit exceeded', 429, correlationId)
+  }
+
+  if (!requireAdminToken(req)) {
+    return apiError('Unauthorized', 401, correlationId)
+  }
+
+  const parsed = await parseJson(req, allowedSchema)
+  if (!parsed.success) {
+    return apiError('Invalid status', 400, correlationId)
+  }
+
   try {
     const { id } = await params
-    const body = await req.json()
-
-    if (!allowed.includes(body.status)) {
-      return NextResponse.json({ ok: false, error: 'Invalid status' }, { status: 400 })
-    }
+    const body = parsed.data
 
     const normalizedStatus = body.status === 'QUALITY_CONTROL' ? 'QC' : body.status
+    const demo = isDemoAutomation(req)
 
+    // Demo automation wants a deterministic pipeline (NEW → … → COMPLETE → INVOICED).
+    // Normal behavior simulates that setting COMPLETE may auto-sync into QuickBooks.
     if (normalizedStatus === 'COMPLETE') {
-      const success = randomSuccess()
+      const success = demo ? false : randomSuccess()
 
       const updated = await prisma.workOrder.update({
         where: { id },
-        data: success
+        data: demo
           ? {
-              status: 'INVOICED',
-              completedAt: new Date(),
-              qbSyncStatus: 'SYNCED',
-              qbLastError: null,
-              qbInvoiceId: `QB-${Date.now()}`,
-            }
-          : {
               status: 'COMPLETE',
               completedAt: new Date(),
-              qbSyncStatus: 'RETRY_PENDING',
-              qbRetryCount: { increment: 1 },
-              qbLastError: 'Mock QuickBooks timeout on auto-sync. Retry queued.',
-            },
+            }
+          : success
+            ? {
+                status: 'INVOICED',
+                completedAt: new Date(),
+                qbSyncStatus: 'SYNCED',
+                qbLastError: null,
+                qbInvoiceId: `QB-${Date.now()}`,
+              }
+            : {
+                status: 'COMPLETE',
+                completedAt: new Date(),
+                qbSyncStatus: 'RETRY_PENDING',
+                qbRetryCount: { increment: 1 },
+                qbLastError: 'Mock QuickBooks timeout on auto-sync. Retry queued.',
+              },
       })
 
       await logAudit({
         entityType: 'WORK_ORDER',
         action: 'STATUS_UPDATED',
-        message: success
-          ? `Status changed COMPLETE -> INVOICED with auto QB sync`
-          : `Status changed to COMPLETE with QB retry pending`,
+        message: demo
+          ? 'Status changed to COMPLETE (demo automation)'
+          : success
+            ? 'Status changed COMPLETE -> INVOICED with auto QB sync'
+            : 'Status changed to COMPLETE with QB retry pending',
         workOrderId: updated.id,
         intakeRequestId: updated.intakeRequestId,
         metadata: {
           requestedStatus: body.status,
           finalStatus: updated.status,
-          autoQbSync: true,
+          autoQbSync: !demo,
           success,
+          demoAutomation: demo,
+          correlationId,
         },
       })
 
       return NextResponse.json({
-        ok: success,
-        autoQbSync: true,
+        ok: true,
+        autoQbSync: !demo,
+        demoAutomation: demo,
         workOrder: updated,
-        error: success ? null : updated.qbLastError,
+        error: !demo && success ? null : updated.qbLastError,
+        correlationId,
       })
+    }
+
+    // INVOICED sets QB fields for a clean demo.
+    if (normalizedStatus === 'INVOICED') {
+      const updated = await prisma.workOrder.update({
+        where: { id },
+        data: {
+          status: 'INVOICED',
+          completedAt: new Date(),
+          qbSyncStatus: 'SYNCED',
+          qbLastError: null,
+          qbInvoiceId: `QB-${Date.now()}`,
+        },
+      })
+
+      await logAudit({
+        entityType: 'WORK_ORDER',
+        action: 'STATUS_UPDATED',
+        message: demo ? 'Status changed to INVOICED (demo automation)' : 'Status changed to INVOICED',
+        workOrderId: updated.id,
+        intakeRequestId: updated.intakeRequestId,
+        metadata: {
+          requestedStatus: body.status,
+          correlationId,
+          demoAutomation: demo,
+        },
+      })
+
+      return NextResponse.json({ ok: true, workOrder: updated, correlationId, demoAutomation: demo })
     }
 
     const updated = await prisma.workOrder.update({
       where: { id },
       data: {
         status: normalizedStatus,
-        completedAt: normalizedStatus === 'INVOICED' ? new Date() : null,
+        completedAt: null,
       },
     })
 
@@ -81,11 +144,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       intakeRequestId: updated.intakeRequestId,
       metadata: {
         requestedStatus: body.status,
+        correlationId,
+        demoAutomation: demo,
       },
     })
 
-    return NextResponse.json({ ok: true, workOrder: updated })
+    return NextResponse.json({ ok: true, workOrder: updated, correlationId, demoAutomation: demo })
   } catch {
-    return NextResponse.json({ ok: false, error: 'Update failed' }, { status: 400 })
+    return apiError('Update failed', 400, correlationId)
   }
 }

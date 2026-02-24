@@ -1,14 +1,28 @@
 import Link from 'next/link'
+import {
+  FilePlus2,
+  KanbanSquare,
+  ClipboardList,
+  Clock3,
+  ReceiptText,
+  Workflow,
+  type LucideIcon,
+} from 'lucide-react'
 
-const links = [
-  ['New service request', 'What Jessica uses to capture intake details', '/intake'],
-  ['Work order board', 'Automation-first pipeline + technician events', '/board'],
-  ['Role dashboard', 'Quick orientation for Jessica / Manager / CEO', '/dashboard'],
-  ['Wallace fallback queue', 'Manual fallback when integration needs help', '/wallace-queue'],
-  ['Wallace exceptions panel', 'Exception-driven manager actions only', '/wallace-exceptions'],
-  ['ClockShark technician time', 'Time windows and per-tech rollups', '/clockshark'],
-  ['QuickBooks invoice monitor', 'Track paid, waiting, and delinquent invoices', '/quickbooks'],
-  ['Unified integration POC', 'WordPress + Wallace + ClockShark + QuickBooks mock flow', '/poc-integration'],
+type HomeLink = {
+  title: string
+  desc: string
+  href: string
+  icon: LucideIcon
+}
+
+const links: HomeLink[] = [
+  { title: 'New service request', desc: 'What Jessica uses to capture intake details', href: '/intake', icon: FilePlus2 },
+  { title: 'Work order board', desc: 'Automation-first pipeline + technician events', href: '/board', icon: KanbanSquare },
+  { title: 'Wallace fallback queue', desc: 'Manual fallback when integration needs help', href: '/wallace-queue', icon: ClipboardList },
+  { title: 'ClockShark technician time', desc: 'Time windows and per-tech rollups', href: '/clockshark', icon: Clock3 },
+  { title: 'QuickBooks invoice monitor', desc: 'Track paid, waiting, and delinquent invoices', href: '/quickbooks', icon: ReceiptText },
+  { title: 'Unified integration POC', desc: 'WordPress + Wallace + ClockShark + QuickBooks mock flow', href: '/poc-integration', icon: Workflow },
 ]
 
 export default function Home() {
@@ -24,8 +38,11 @@ export default function Home() {
         </section>
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {links.map(([title, desc, href]) => (
+          {links.map(({ title, desc, href, icon: Icon }) => (
             <Link key={href} className="card-soft group p-5 transition hover:-translate-y-0.5 hover:shadow-md" href={href}>
+              <div className="mb-3 inline-flex rounded-lg border border-slate-200 bg-white p-2 text-slate-700">
+                <Icon size={18} strokeWidth={2} />
+              </div>
               <p className="font-semibold text-slate-900">{title}</p>
               <p className="mt-1 text-sm text-slate-600">{desc}</p>
               <p className="mt-4 text-xs font-medium text-emerald-700 group-hover:text-emerald-600">Open →</p>

@@ -1,8 +1,20 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { apiError, rateLimit, requireAdminToken } from '@/lib/api-guard'
+import { getCorrelationId } from '@/lib/correlation'
 
-export async function POST(_req: Request, { params }: { params: Promise<{ workOrderId: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ workOrderId: string }> }) {
+  const correlationId = getCorrelationId(req)
+
+  if (!rateLimit(req, 'qb-reminder-post', 60, 60_000)) {
+    return apiError('Rate limit exceeded', 429, correlationId)
+  }
+
+  if (!requireAdminToken(req)) {
+    return apiError('Unauthorized', 401, correlationId)
+  }
+
   try {
     const { workOrderId } = await params
 
@@ -12,15 +24,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ workOr
     })
 
     if (!wo) {
-      return NextResponse.json({ ok: false, error: 'Work order not found' }, { status: 404 })
+      return apiError('Work order not found', 404, correlationId)
     }
 
     const email = wo.intakeRequest.email
     if (!email) {
-      return NextResponse.json({ ok: false, error: 'Customer email missing' }, { status: 400 })
+      return apiError('Customer email missing', 400, correlationId)
     }
 
-    // Mock-only: queue reminder intent in audit log for now.
     await logAudit({
       entityType: 'QUICKBOOKS',
       action: 'QB_REMINDER_QUEUED',
@@ -32,6 +43,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ workOr
         to: email,
         invoiceId: wo.qbInvoiceId ?? `WO-${wo.id.slice(-6).toUpperCase()}`,
         bucket: wo.qbSyncStatus,
+        correlationId,
       },
     })
 
@@ -41,8 +53,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ workOr
         status: 'QUEUED_MOCK',
         to: email,
       },
+      correlationId,
     })
   } catch {
-    return NextResponse.json({ ok: false, error: 'Failed to queue reminder' }, { status: 500 })
+    return apiError('Failed to queue reminder', 500, correlationId)
   }
 }
