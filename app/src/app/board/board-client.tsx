@@ -106,9 +106,14 @@ function ageHours(updatedAt: string | undefined, nowMs: number) {
   return Math.floor((nowMs - t) / (60 * 60 * 1000))
 }
 
-export default function BoardClient() {
-  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([])
-  const [intakes, setIntakes] = useState<Intake[]>([])
+type Props = {
+  initialWorkOrders?: WorkOrder[]
+  initialIntakes?: Intake[]
+}
+
+export default function BoardClient({ initialWorkOrders = [], initialIntakes = [] }: Props) {
+  const [workOrders, setWorkOrders] = useState<WorkOrder[]>(initialWorkOrders)
+  const [intakes, setIntakes] = useState<Intake[]>(initialIntakes)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [showStuckOnly, setShowStuckOnly] = useState(false)
@@ -146,7 +151,14 @@ export default function BoardClient() {
     if (typeof prefs.stuckHours === 'number') setStuckHours(prefs.stuckHours)
     if (typeof prefs.query === 'string') setQuery(prefs.query)
 
-    load()
+    // Use initial data if available, otherwise fetch
+    if (initialWorkOrders.length > 0 && initialIntakes.length > 0) {
+      setWorkOrders(initialWorkOrders)
+      setIntakes(initialIntakes)
+    } else {
+      load()
+    }
+    
     setNowMs(Date.now())
     const t = setInterval(() => setNowMs(Date.now()), 60000)
     return () => clearInterval(t)
@@ -253,8 +265,8 @@ export default function BoardClient() {
 
   async function runAutomationDemo(opts: { sampleSize?: number; minMs?: number; maxMs?: number } = {}) {
     const sampleSize = opts.sampleSize ?? 5
-    const minMs = opts.minMs ?? 1000
-    const maxMs = opts.maxMs ?? 3000
+    const minMs = opts.minMs ?? 3000
+    const maxMs = opts.maxMs ?? 5000
 
     // Reset stop flag and show UI state immediately.
     demoStopRef.current = false
@@ -280,43 +292,51 @@ export default function BoardClient() {
 
     setNotice({ kind: 'success', message: `Automation demo started (${candidates.length} work orders).` })
 
-    try {
-      // Workday simulation:
-      // - move ONE work order at a time
-      // - add a 1–3s buffer between each move
-      // - walk through each stage in order (NEW → … → INVOICED)
-      for (const id of candidates) {
+    // Move a single work order through the remaining pipeline stages.
+    const moveOne = async (id: string, staggerMs: number) => {
+      // Stagger start so work orders don't all move at once.
+      await sleep(staggerMs)
+
+      if (demoStopRef.current) return
+
+      // Fetch latest status for this work order.
+      const snapshot = await fetch('/api/work-orders/list', { cache: 'no-store' })
+        .then((r) => r.json())
+        .catch(() => null)
+      const rows: WorkOrder[] = snapshot?.workOrders ?? workOrders
+      const wo = rows.find((w) => w.id === id)
+      if (!wo) return
+
+      const current = (statuses.includes(wo.status as Status) ? (wo.status as Status) : 'NEW') as Status
+      const startIdx = statuses.indexOf(current)
+
+      // Walk through remaining pipeline stages one step at a time.
+      for (let i = Math.max(0, startIdx); i < statuses.length - 1; i++) {
         if (demoStopRef.current) break
 
-        // Fetch latest status for this work order.
-        const snapshot = await fetch('/api/work-orders/list', { cache: 'no-store' })
-          .then((r) => r.json())
-          .catch(() => null)
-        const rows: WorkOrder[] = snapshot?.workOrders ?? workOrders
-        const wo = rows.find((w) => w.id === id)
-        if (!wo) continue
+        const next = statuses[i + 1]
 
-        const current = (statuses.includes(wo.status as Status) ? (wo.status as Status) : 'NEW') as Status
-        const startIdx = statuses.indexOf(current)
+        await setStatus(id, next, { quiet: true })
+        setDemoTick((t) => t + 1)
 
-        // Move through remaining pipeline stages.
-        for (let i = Math.max(0, startIdx); i < statuses.length - 1; i++) {
-          if (demoStopRef.current) break
+        // Wait between each stage move (~3–5s base + extra pause after COMPLETE).
+        await sleep(randMs(minMs, maxMs))
 
-          const next = statuses[i + 1]
-
-          // Ensure we hit COMPLETE then INVOICED, even if COMPLETE auto-syncs.
-          await setStatus(id, next, { quiet: true })
-          setDemoTick((t) => t + 1)
-
-          await sleep(randMs(minMs, maxMs))
-
-          if (next === 'COMPLETE') {
-            // Some mock flows auto-advance COMPLETE → INVOICED; if not, we'll still advance next loop.
-            await sleep(randMs(minMs, maxMs))
-          }
+        if (next === 'COMPLETE') {
+          // Brief extra pause at COMPLETE so it's visible before INVOICED.
+          await sleep(randMs(1000, 2000))
         }
       }
+    }
+
+    try {
+      // Workday simulation:
+      // - all eligible work orders move through the pipeline simultaneously
+      // - each starts with a random stagger (0–2s per position) so they don't move in lockstep
+      // - each stage transition waits 3–5s so progress is clearly visible
+      await Promise.all(
+        candidates.map((id, idx) => moveOne(id, idx * randMs(800, 2000)))
+      )
     } finally {
       setDemoRunning(false)
       demoStopRef.current = false
@@ -570,6 +590,12 @@ export default function BoardClient() {
                   >
                     {busyId === i.id ? 'Creating…' : 'Create work order'}
                   </button>
+                  <Link
+                    href={`/intake/${i.id}/edit`}
+                    className="px-3 py-1 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500 text-sm"
+                  >
+                    Edit
+                  </Link>
                   <button
                     className="px-3 py-1 rounded-xl bg-rose-600 text-white disabled:opacity-50 hover:bg-rose-500"
                     onClick={() => deleteIntake(i.id, i.customerName)}
@@ -595,7 +621,7 @@ export default function BoardClient() {
                 disabled={demoRunning}
                 onClick={() => {
                   // Option 1 + workday: move a small sample with 2–4s jitter between each step.
-                  void runAutomationDemo({ sampleSize: 5, minMs: 2000, maxMs: 4000 })
+                  void runAutomationDemo({ sampleSize: 5, minMs: 3000, maxMs: 5000 })
                 }}
                 title="Simulate a workday: slowly moves a few work orders across the pipeline to INVOICED"
               >
