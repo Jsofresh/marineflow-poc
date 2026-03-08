@@ -162,7 +162,7 @@ export default function BoardClient({ initialWorkOrders = [], initialIntakes = [
     setNowMs(Date.now())
     const t = setInterval(() => setNowMs(Date.now()), 60000)
     return () => clearInterval(t)
-  }, [])
+  }, [initialWorkOrders, initialIntakes])
 
   useEffect(() => {
     savePrefs({ savedView, manualOverride, showStuckOnly, stuckHours, query })

@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { apiError, parseJson, rateLimit, requireAdminToken } from '@/lib/api-guard'
 import { getCorrelationId } from '@/lib/correlation'
+import { buildQbInvoicePayload } from '@/lib/qb-map'
 
 const allowedSchema = z.object({
   status: z.enum(['NEW', 'APPROVED', 'PARTS_ORDERED', 'IN_PROGRESS', 'QC', 'QUALITY_CONTROL', 'COMPLETE', 'INVOICED']),
@@ -101,6 +102,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     // INVOICED sets QB fields for a clean demo.
     if (normalizedStatus === 'INVOICED') {
+      // Fetch intake so we can build a QB payload with real totals.
+      const existing = await prisma.workOrder.findUnique({
+        where: { id },
+        include: { intakeRequest: true },
+      })
+
+      const invoiceId = `QB-${Date.now()}`
+
       const updated = await prisma.workOrder.update({
         where: { id },
         data: {
@@ -108,7 +117,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           completedAt: new Date(),
           qbSyncStatus: 'SYNCED',
           qbLastError: null,
-          qbInvoiceId: `QB-${Date.now()}`,
+          qbInvoiceId: invoiceId,
         },
       })
 
@@ -124,6 +133,28 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           demoAutomation: demo,
         },
       })
+
+      // Log a QB_SYNC_SUCCESS so the QuickBooks page can display the total bill.
+      if (existing) {
+        const qbPayload = buildQbInvoicePayload(existing, existing.intakeRequest)
+        const qbTotal = qbPayload.Line.reduce((sum, l) => sum + l.Amount, 0)
+
+        await logAudit({
+          entityType: 'QUICKBOOKS',
+          action: 'QB_SYNC_SUCCESS',
+          message: `QuickBooks mock invoice generated (${invoiceId})`,
+          workOrderId: updated.id,
+          intakeRequestId: updated.intakeRequestId,
+          metadata: {
+            qbPayload,
+            invoiceId,
+            totals: {
+              qbTotal: Number(qbTotal.toFixed(2)),
+              packetTotal: Number(qbTotal.toFixed(2)),
+            },
+          },
+        })
+      }
 
       return NextResponse.json({ ok: true, workOrder: updated, correlationId, demoAutomation: demo })
     }

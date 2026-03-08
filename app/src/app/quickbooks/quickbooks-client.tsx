@@ -50,7 +50,7 @@ export default function QuickBooksClient({ initialData }: Props) {
       setData(initialData)
       setLastSyncedAt(new Date().toISOString())
     }
-  }, [])
+  }, [initialData])
 
   async function setBucket(workOrderId: string, bucket: 'PAID' | 'WAITING' | 'DELINQUENT') {
     setBusyId(workOrderId)

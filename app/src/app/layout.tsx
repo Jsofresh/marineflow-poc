@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
-import { WallaceNavStatus } from '@/components/wallace-nav-status'
+// WallaceNavStatus (E•C•R plumbing label) removed — Dashboard link replaces it
 
 const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] })
 const geistMono = Geist_Mono({ variable: '--font-geist-mono', subsets: ['latin'] })
@@ -27,10 +27,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               <nav className="flex items-center gap-2 text-sm text-slate-700">
                 <Link href="/intake" className="rounded-lg px-3 py-1.5 hover:bg-slate-100">Intake</Link>
                 <Link href="/board" className="rounded-lg px-3 py-1.5 hover:bg-slate-100">Board</Link>
-                <WallaceNavStatus />
                 <Link href="/wallace-export" className="rounded-lg px-3 py-1.5 hover:bg-slate-100">Wallace → QBO</Link>
                 <Link href="/clockshark" className="rounded-lg px-3 py-1.5 hover:bg-slate-100">ClockShark</Link>
                 <Link href="/quickbooks" className="rounded-lg px-3 py-1.5 hover:bg-slate-100">QuickBooks</Link>
+                <Link href="/dashboard" className="rounded-lg px-3 py-1.5 hover:bg-slate-100">Dashboard</Link>
               </nav>
             </div>
 

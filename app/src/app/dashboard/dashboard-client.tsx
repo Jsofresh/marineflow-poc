@@ -77,7 +77,7 @@ export default function DashboardPage({ initialSummary }: { initialSummary?: Sum
       const t = setTimeout(() => load(), 0)
       return () => clearTimeout(t)
     }
-  }, [])
+  }, [initialSummary])
 
   async function handleRefresh() {
     setRefreshing(true)

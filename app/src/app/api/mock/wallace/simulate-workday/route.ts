@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { buildQbInvoicePayload } from '@/lib/qb-map'
+import { createWallaceInvoiceFromQboPayload, listWallaceInvoices } from '@/lib/mock-wallace-invoices'
 
 function deterministicTotal(id: string) {
   const seed = id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)
@@ -90,19 +92,35 @@ export async function POST() {
     })
   )
 
-  // 3) Ready for review: snapshot Wallace packet totals (source of truth for billing)
+  // 3) Ready for review: auto-create Wallace invoice (simulates Wallace's scan output)
   await Promise.all(
     toReady.map(async (w) => {
       const packetTotal = deterministicTotal(w.id)
+
+      // Auto-create Wallace invoice if not already created (idempotent)
+      const existingInvoices = listWallaceInvoices(w.id)
+      if (existingInvoices.length === 0) {
+        const qbPayload = buildQbInvoicePayload(w, w.intakeRequest)
+        createWallaceInvoiceFromQboPayload({
+          marineflowWorkOrderId: w.id,
+          wallaceWorkOrderId: w.wallaceExternalId ?? `WAL-${w.id.slice(-6).toUpperCase()}`,
+          customerName: w.intakeRequest.customerName,
+          vesselName: w.intakeRequest.vesselName,
+          location: w.intakeRequest.location,
+          qbPayload,
+        })
+      }
+
       await logAudit({
         entityType: 'WORK_ORDER',
         action: 'WALLACE_PACKET_SNAPSHOT',
-        message: 'Wallace packet snapshot created (ready for review)',
+        message: 'Wallace scan auto-created invoice — ready for QuickBooks export',
         workOrderId: w.id,
         intakeRequestId: w.intakeRequestId,
         metadata: {
           totals: { packetTotal },
           backfillSource: 'SIM_WORKDAY',
+          autoInvoiceCreated: existingInvoices.length === 0,
           simulated: true,
         },
       })
@@ -110,7 +128,7 @@ export async function POST() {
       await logAudit({
         entityType: 'WORK_ORDER',
         action: 'WALLACE_READY_FOR_REVIEW',
-        message: 'Wallace scan marked work order ready for billing review',
+        message: 'Wallace scan marked work order ready for QuickBooks export',
         workOrderId: w.id,
         intakeRequestId: w.intakeRequestId,
         metadata: { simulated: true },

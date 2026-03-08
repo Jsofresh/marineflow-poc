@@ -18,7 +18,7 @@ type Props = {
 
 export default function CEOPage({ initialSummary }: Props) {
   const [summary, setSummary] = useState<Summary | null>(initialSummary ?? null)
-  const [stuckCount, setStuckCount] = useState(0)
+  const [stuckCount, setStuckCount] = useState(initialSummary ? 0 : 0)
 
   useEffect(() => {
     if (!initialSummary) {
@@ -29,10 +29,8 @@ export default function CEOPage({ initialSummary }: Props) {
         setSummary(s.summary)
         setStuckCount(stuck.count ?? 0)
       })
-    } else {
-      setSummary(initialSummary)
     }
-  }, [])
+  }, [initialSummary])
 
   if (!summary) return <main className="p-8">Loading CEO dashboard…</main>
 
