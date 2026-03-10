@@ -14,9 +14,9 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: OSV-Scanner
-        uses: google/osv-scanner-action@v1.7.2
+        uses: google/osv-scanner-action@v2.3.3
         with:
           scan-args: |-
             -r
